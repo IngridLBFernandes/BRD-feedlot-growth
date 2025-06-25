@@ -581,7 +581,7 @@ vegan::adonis2(psdist ~ phyloseq::sample_data(beta1)$pneumonia_weaning, permutat
 ps_filtered2 <- ps_filtered2 %>% tax_fix(unknowns = c("Incertae Sedis"))
 
 
-# Beta diversity for pneumonia at weaning
+# Beta diversity for pneumonia at weaning - Figure 2
 ps_filtered2 %>%
   tax_transform("clr", rank = "Genus") %>%
   ord_calc(method = "PCA") %>%  
@@ -605,7 +605,7 @@ ps_filtered2 %>%
 filtered_test <- filtered_test %>%
   ps_filter(sample_sums(.) > 0)
 
-#####Model use for relative abundance- Genus
+#####Model use for relative abundance- Genus - Figure 3
 
 filtered_test %>%
   tax_agg("Genus") %>%
@@ -632,7 +632,7 @@ filtered_test %>%
 
 
 
-#####Model use for relative abundance- Phylum
+#####Model use for relative abundance- Phylum - Figure 4
 
 filtered_test %>%
   tax_agg("Phylum") %>%
