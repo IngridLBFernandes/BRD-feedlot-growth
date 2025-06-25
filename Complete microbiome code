@@ -439,3 +439,221 @@ sample_data(psrelabund)
 
 # ---- save work 
 save.image("ps_object/decontam.rdata")
+
+
+
+library(BiocManager)
+library(vegan)
+library(patchwork)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(pairwiseAdonis)
+library(scales)
+library(tidyr)
+library(writexl)
+library(car)
+library(dunn.test)
+library(openxlsx)
+library(microbiome)
+library(tidylog)
+library(data.table)
+library(ALDEx2)
+library(ggrepel)
+
+
+set.seed(200789)
+ps <- readRDS("ps_object/ps_Ingrid_posdecontam-filtered-counts.rds")
+ps
+
+
+#Removing cattle from the data set that can confound
+ps_filtered1 <- prune_samples(sample_names(ps) != "I2" , ps)
+ps_filtered3 <- prune_samples(sample_names(ps_filtered1) != "I30" , ps_filtered1) #missing a pair
+ps_filtered4 <- prune_samples(sample_names(ps_filtered3) != "I10" , ps_filtered3) #missing a pair
+ps_filtered5 <- prune_samples(sample_names(ps_filtered4) != "I19" , ps_filtered4) #missing a pair
+ps_filtered6 <- prune_samples(sample_names(ps_filtered5) != "I27" , ps_filtered5) #missing a pair
+ps_filtered7 <- prune_samples(sample_names(ps_filtered6) != "I73" , ps_filtered6) #missing a pair
+ps_filtered8 <- prune_samples(sample_names(ps_filtered7) != "I37" , ps_filtered7) #not a pair
+ps_filtered9 <- prune_samples(sample_names(ps_filtered8) != "I5" , ps_filtered8) #pus part of liver with abscess - ID 315 - kept I74 the healthy part
+ps_filtered10 <- prune_samples(sample_names(ps_filtered9) != "I42" , ps_filtered9) #not a pair
+ps_filtered11 <- prune_samples(sample_names(ps_filtered10) != "I8" , ps_filtered10)# not a pair
+ps_filtered12 <- prune_samples(sample_names(ps_filtered11) != "I17" , ps_filtered11)#liver condemned and not paired
+ps_filtered13 <- prune_samples(sample_names(ps_filtered12) != "I45" , ps_filtered12)#liver condemned and not paired
+ps_filtered14 <- prune_samples(sample_names(ps_filtered13) != "I66" , ps_filtered13)#liver condemned and not paired
+ps_filtered15 <- prune_samples(sample_names(ps_filtered14) != "I47" , ps_filtered14)#liver condemned and not paired
+ps_filtered16 <- prune_samples(sample_names(ps_filtered15) != "I33" , ps_filtered15)##liver paired
+ps_filtered17 <- prune_samples(sample_names(ps_filtered16) != "I11" , ps_filtered16)#liver paired 
+ps_filtered18 <- prune_samples(sample_names(ps_filtered17) != "I71" , ps_filtered17)##liver paired
+ps_filtered19 <- prune_samples(sample_names(ps_filtered18) != "I74" , ps_filtered18)#liver paired
+ps_filtered20 <- prune_samples(sample_names(ps_filtered19) != "I7" , ps_filtered19)#liver paired
+ps_filtered21 <- prune_samples(sample_names(ps_filtered20) != "I48" , ps_filtered20)#liver paired
+ps_filtered22 <- prune_samples(sample_names(ps_filtered21) != "I53" , ps_filtered21)#liver paired
+ps_filtered23 <- prune_samples(sample_names(ps_filtered22) != "I15" , ps_filtered22)#lung scar at slaughter
+ps_filtered24 <- prune_samples(sample_names(ps_filtered23) != "I40" , ps_filtered23)#lung scar at slaughter
+ps_filtered25 <- prune_samples(sample_names(ps_filtered24) != "I51" , ps_filtered24)#lung scar at slaughter
+ps_filtered26 <- prune_samples(sample_names(ps_filtered25) != "I59" , ps_filtered25)#lung scar at slaughter
+ps_filtered27 <- prune_samples(sample_names(ps_filtered26) != "I63" , ps_filtered26)#lung scar at slaughter
+ps_filtered28 <- prune_samples(sample_names(ps_filtered27) != "I12" , ps_filtered27)#lung scar at slaughter
+ps_filtered29 <- prune_samples(sample_names(ps_filtered28) != "I28" , ps_filtered28)#lung scar at slaughter
+ps_filtered30 <- prune_samples(sample_names(ps_filtered29) != "I39" , ps_filtered29)#lung scar at slaughter
+ps_filtered31 <- prune_samples(sample_names(ps_filtered30) != "I41" , ps_filtered30)#lung scar at slaughter
+ps_filtered32 <- prune_samples(sample_names(ps_filtered31) != "I4" , ps_filtered31)#lung scar at slaughter
+ps_filtered33 <- prune_samples(sample_names(ps_filtered32) != "I58" , ps_filtered32)#lung scar at slaughter
+ps_filtered34 <- prune_samples(sample_names(ps_filtered33) != "I61" , ps_filtered33)#lung scar at slaughter
+ps_filtered35 <- prune_samples(sample_names(ps_filtered34) != "I16" , ps_filtered34) #low reading - less 2000
+ps_filtered36 <- prune_samples(sample_names(ps_filtered35) != "I1" , ps_filtered35) #low reading - less 2000
+ps_filtered37 <- prune_samples(sample_names(ps_filtered36) != "I50" , ps_filtered36)#low reading - less 2000
+ps_filtered38 <- prune_samples(sample_names(ps_filtered37) != "I52" , ps_filtered37)#low reading - less 2000
+ps_filtered39 <- prune_samples(sample_names(ps_filtered38) != "I54" , ps_filtered38)#low reading - less 2000
+ps_filtered40 <- prune_samples(sample_names(ps_filtered39) != "I56" , ps_filtered39)#low reading - less 2000
+ps_filtered41 <- prune_samples(sample_names(ps_filtered40) != "I64" , ps_filtered40)#low reading - less 2000
+ps_filtered42 <- prune_samples(sample_names(ps_filtered41) != "I9" , ps_filtered41)#low reading - less 2000
+ps_filtered43 <- prune_samples(sample_names(ps_filtered42) != "I32" , ps_filtered42)#low reading - less 2000
+ps_filtered44 <- prune_samples(sample_names(ps_filtered43) != "I49" , ps_filtered43)#low reading - less 2000
+ps_filtered46 <- prune_samples(sample_names(ps_filtered44) != "I55" , ps_filtered44)#low reading - less 2000
+ps_filtered2 <- prune_samples(sample_names(ps_filtered46) != "I57" , ps_filtered46)#low reading - less 2000
+
+
+ps_filtered2
+
+View(sam_data(ps_filtered9))
+
+met <- sample_data(ps_filtered2)
+write.xlsx(met, "Tables/table_metadata_check.xlsx")
+
+
+otu_table(ps_filtered2)
+tax_table(ps_filtered2)
+
+
+dim(otu_table(ps_filtered2))  # Check dimensions of the OTU table
+head(otu_table(ps_filtered2))  # View the first few rows of the OTU table
+
+sample_data(ps_filtered2)
+
+##LOAD THE DIVERSITY TABLE
+
+# create data frames ----
+
+adivA <- data.frame(
+  "Observed" = phyloseq::estimate_richness(ps_filtered2, measures = "Observed"),
+  "Simpson" = phyloseq::estimate_richness(ps_filtered2, measures = "Simpson"),
+  "Shannon" = phyloseq::estimate_richness(ps_filtered2, measures = "Shannon"),
+  "PneumoniaWeaning" = phyloseq::sample_data(ps_filtered2)$pneumonia_weaning,
+  "Sample_ID" = phyloseq::sample_data(ps_filtered2)$Sequencing_ID
+)
+
+
+
+##LOAD THE DIVERSITY TABLE
+write.xlsx(adivA, "tables/table_AlphaDiversity.xlsx")
+
+alpha_table <- readxl::read_excel("tables/table_AlphaDiversity.xlsx")
+alpha_table
+
+# ---- Beta diversity analysis ----
+
+# tax fix our phyloseq object
+ps_filtered2 <- tax_fix(ps_filtered2)
+
+ps_filtered2 <- ps_filtered2 %>% tax_fix(unknowns = c("Incertae Sedis"))
+
+### ---- BETA DIVERSITY ----
+
+ps_filtered2 <- tax_fix(ps, unknowns = c("Incertae_Sedis", "NA"))
+
+# clr transform phyloseq objects at Genus level
+beta1 <- ps_filtered2 %>%
+  tax_transform(trans = "clr", rank = "Genus") %>%
+  ps_get()
+
+# generate distance matrix
+psdist <- phyloseq::distance(beta1, method = "euclidean")
+
+#ADONIS test
+
+vegan::adonis2(psdist ~ phyloseq::sample_data(beta1)$pneumonia_weaning, permutations = 999)
+
+
+# ----- Plot Beta Diverstiy ---- 
+# fx unknown taxa
+ps_filtered2 <- ps_filtered2 %>% tax_fix(unknowns = c("Incertae Sedis"))
+
+
+# Beta diversity for pneumonia at weaning
+ps_filtered2 %>%
+  tax_transform("clr", rank = "Genus") %>%
+  ord_calc(method = "PCA") %>%  
+  ord_plot(color = "pneumonia_weaning", size = 6, alpha = 0.5) +  
+  scale_color_viridis_d(
+    name = "At weaning", labels = c("0" = "Healthy", "1" = "BRD"),option = "C", begin = 0.1, end = 0.7, direction = 1) +
+  stat_ellipse(aes(group = pneumonia_weaning, colour = pneumonia_weaning)) +
+  theme_classic() +  
+  theme(
+    text = element_text(family = "times"),
+    axis.title = element_text(size = 16, color = "black"), 
+    axis.text = element_text(size = 16, color = "black"),
+    legend.position = "right",
+    legend.text = element_text(size = 16),  
+    legend.title = element_text(family = "times", size = 16),  
+    panel.grid = element_blank()  
+  )
+
+#---Relative abundance plots ---#
+     
+filtered_test <- filtered_test %>%
+  ps_filter(sample_sums(.) > 0)
+
+#####Model use for relative abundance- Genus
+
+filtered_test %>%
+  tax_agg("Genus") %>%
+  tax_transform("compositional") %>%
+  ps_arrange(desc(Staphylococcus), .target = "otu_table") %>%
+  comp_barplot(tax_level = "Genus", n_taxa = 15, sample_order = "asis", counts_warn = FALSE) +
+  facet_wrap(~pneumonia_weaning, scales = "free_y", 
+             labeller = as_labeller(c("0" = "Healthy", "1" = "BRD"))) + 
+  coord_flip() +  # Flip coordinates to make the bars horizontal
+  theme(
+    axis.title.y = element_blank(),  # Remove y-axis title
+    axis.title.x = element_text(size = 14, face = "bold"),  # Keep x-axis title and change size
+    axis.text.x = element_text(size = 12),  # Keep x-axis sample labels (on bars)
+    #axis.text.y = element_blank(),  # Remove y-axis sample labels
+    axis.ticks.y = element_blank(),  # Remove y-axis ticks
+    axis.line = element_blank(),  # Remove both x and y axis lines
+    strip.text = element_text(size = 16, face = "bold"),  # Keep facet labels visible
+    legend.title = element_text(size = 14, face = "bold"),  # Legend title size
+    legend.text = element_text(size = 14),  # Legend text size
+    panel.grid = element_blank(),  # Remove grid lines
+    panel.border = element_blank(),  # Remove panel border
+    panel.spacing = unit(0, "lines")  # Adjust spacing between panels, in case it's causing lines to appear
+  ) + labs(y = "Relative Abundance")
+
+
+
+#####Model use for relative abundance- Phylum
+
+filtered_test %>%
+  tax_agg("Phylum") %>%
+  tax_transform("compositional") %>%
+  ps_arrange(desc(Firmicutes), .target = "otu_table") %>%
+  comp_barplot(tax_level = "Phylum", n_taxa = 15, sample_order = "asis", counts_warn = FALSE) +
+  facet_wrap(~pneumonia_weaning, scales = "free_y", 
+             labeller = as_labeller(c("0" = "CONTROL", "1" = "BRD"))) + 
+  coord_flip() +  # Flip coordinates to make the bars horizontal
+  theme(
+    axis.title.y = element_blank(),  # Remove y-axis title
+    axis.title.x = element_text(size = 14, face = "bold"),  # Keep x-axis title and change size
+    axis.text.x = element_text(size = 12),  # Keep x-axis sample labels (on bars)
+    #axis.text.y = element_blank(),  # Remove y-axis sample labels
+    axis.ticks.y = element_blank(),  # Remove y-axis ticks
+    axis.line = element_blank(),  # Remove both x and y axis lines
+    strip.text = element_text(size = 16, face = "bold"),  # Keep facet labels visible
+    legend.title = element_text(size = 14, face = "bold"),  # Legend title size
+    legend.text = element_text(size = 14),  # Legend text size
+    panel.grid = element_blank(),  # Remove grid lines
+    panel.border = element_blank(),  # Remove panel border
+    panel.spacing = unit(0, "lines")  # Adjust spacing between panels, in case it's causing lines to appear
+  ) + labs(y = "Relative Abundance")
+
