@@ -1,0 +1,441 @@
+# load packages
+require(tidyverse)
+require(phyloseq)
+require(dada2)
+require(microViz)
+require(decontam)
+require(ggpubr)
+
+# get data
+load("ps_object/ps-raw.rds")
+
+## ---- basic info ----
+ps <- psraw
+sample_data(ps)
+
+
+sample_data(ps)
+head(sample_data(ps))
+tail(sample_data(ps))
+
+ntaxa(ps) # 22353 taxa
+
+get_taxa_unique(ps, "Phylum") # 34 different phyla including NA
+get_taxa_unique(ps, "Kingdom") # 4 kingdoms including NA- need to filter this first
+
+# how many controls at each step
+ps %>% samdat_tbl() %>% group_by(Student_Name) %>% summarize(n()) 
+
+# ---- filter for Bacteria & remove NA phyla ----
+
+#look for mito or chloroplasts
+sort(get_taxa_unique(ps, "Order"))
+sort(get_taxa_unique(ps, "Order"))
+
+#remove them if there
+psfilt <- subset_taxa(ps, Order != "Chloroplast")
+psfilt <- subset_taxa(psfilt, Family != "Mitochondria")
+
+# get only bacteria
+psf <- subset_taxa(psfilt, Kingdom == "Bacteria")
+
+# remove NA phylum
+psf1 <- subset_taxa(psf, !is.na(Phylum) & !Phylum %in% c("", "NA"))
+psf1 <- subset_taxa(psf1, !is.na(Genus) & !Genus %in% c("", "NA"))
+
+# validate
+psf2 <- tax_fix(psf1)
+psf3 <- phyloseq_validate(psf2, remove_undetected = TRUE)
+
+get_taxa_unique(psf3, "Kingdom")
+
+## ---- filter for relative abundance ----
+# transform to relative abundance
+pst <- transform_sample_counts(psf3, function(x) x / sum(x) )
+
+# Mean across samples for each taxon
+taxa_mean_abundance <- apply(otu_table(pst), 2, mean)  
+
+# Inspect first few
+head(taxa_mean_abundance)
+
+# Get a summary of the means
+summary(taxa_mean_abundance)  
+
+#check the means on a histogram 
+hist(taxa_mean_abundance, breaks = 50, main = "Distribution of Mean Relative Abundances",
+     xlab = "Mean Relative Abundance", col = "skyblue")
+
+# Remove taxa with NA values in their mean relative abundance
+pst_clean <- subset_taxa(pst, !is.na(apply(otu_table(pst), 2, mean)))
+
+# Replace NA values with 0
+otu_table(pst)[is.na(otu_table(pst))] <- 0
+
+# Adjust threshold to 1e-4 or 1e-3, depending on what makes sense for your data
+psr <- filter_taxa(pst, function(x) mean(x) > 1e-4, TRUE)  # Adjust threshold
+
+
+## ---- Decontam ----
+## workflow from: https://benjjneb.github.io/decontam/vignettes/decontam_intro.html
+
+# add sampling variables
+psd <- psr %>% 
+  ps_mutate(
+    SampleBinary = if_else(str_detect(Sample_Type,"-Neg") | str_detect(Sample_Type, "-Pos"), true = "Control", false = "Sample")
+  )
+
+#check
+sample_data(psd)
+
+## remove positive controls for this 
+## update - keep and remove contaminants like a sample
+#psnopos <- psd %>% ps_filter(!Treatment %in% c("PCP2", "PCP3", "PCP1", "PCISO1"))
+
+## inspect library sizes 
+sampdf <- data.frame(sample_data(psd))
+sampdf$LibrarySize <- sample_sums(psd)
+sampdf <- sampdf[order(sampdf$LibrarySize), ]
+sampdf$Index <- seq(nrow(sampdf))
+ggplot(data = sampdf, aes(x = Index, y = LibrarySize, color = SampleBinary)) + geom_point()
+## controls are scattered throughout
+
+## use negative controls to identify contaminants
+# add distinguishers for positive controls and treat as a sample
+psp <- psd %>% ps_mutate(SampleBinary = case_when(
+  SampleBinary == "Control" & str_detect(Sample_Type, "-Pos") ~ "Sample",
+  SampleBinary == "Control" & !str_detect(Sample_Type, "-Pos") ~ "Control",
+  SampleBinary == "Sample" ~ "Sample"
+))
+
+pds <- psp %>% ps_mutate(is.neg = if_else(SampleBinary == "Control", true = TRUE, false = FALSE))
+contamdf.prev <- isContaminant(pds, method="prevalence", neg="is.neg", threshold = 0.5) # more aggressive threshold is 0.5
+table(contamdf.prev$contaminant) # this identifies  contaminants and 'true' taxa
+
+## identify the contaminant taxa and remove them from the phyloseq object
+psdecon <- prune_taxa(!contamdf.prev$contaminant, pds)
+#FALSE  TRUE 
+#995    504  
+
+## remove the positive controls and save the decontaminated phyloseq object
+pssave <- ps_filter(psdecon, SampleBinary == "Sample") %>% 
+  # remove positive controls
+  ps_filter(!str_detect(Sample_Type, "-Pos")) %>% 
+  ps_select(-c(is.neg, SampleBinary))
+
+factor(sample_data(pssave)$Sample_Type)
+sort(get_taxa_unique(pssave, "Order"))
+
+pssave <- pssave %>%
+  tax_select(tax_list = "Chloroplast", deselect = TRUE)
+
+pssave <- pssave %>%
+  tax_select(tax_list = "Mitochondria", deselect = TRUE)
+
+pssave
+pssave1 <- filter_taxa(pssave, function(x) sum(is.na(x)) == 0, TRUE)
+#this leaves 1067 taxa and 316 samples
+
+# write # this is an object that the negative controls were removed 
+# there still potential positive control
+saveRDS(pssave, "ps_object/ps-decontam-filtered.rds")
+
+## ---- negative controls ----
+
+# what do raw controls look like
+neg <- ps %>% ps_filter(Sample_Type != "Swab" | Sample_Type != "Milk" | Sample_Type != "Feces" | Sample_Type != "Liver") %>% 
+  
+  
+  # get negatives
+  ps_filter(str_detect(Sample_Type, "-Neg")) %>% 
+  tax_fix()
+
+
+ntaxa(neg) # 1042 taxa
+
+#the following code is removing samples with zero counts across all taxa directly from the phyloseq object
+neg_clean <- prune_samples(sample_sums(neg) > 0, neg)
+ntaxa(neg_clean)  # Number of taxa
+nsamples(neg_clean)  # Number of samples
+
+neg <- neg_clean
+
+# barplot
+neg %>%
+  comp_barplot(
+    tax_level = "Phylum", n_taxa = 10,  
+    merge_other = FALSE 
+    # set merge_other = TRUE (the default) to remove outlines from inside "other" category
+  ) +
+  facet_wrap("Sample_Type", scales = "free") +
+  labs(x = NULL, y = NULL)
+
+
+## filtered neg controls
+negf <- subset_taxa(ps, taxa_names(ps) %in% taxa_names(psr)) %>% 
+  ps_filter(Sample_Type != "Swab" | Sample_Type != "Milk" | Sample_Type != "Feces" | Sample_Type != "Liver") %>%
+  
+  
+  
+  # get negatives
+  ps_filter(str_detect(Sample_Type, "-Neg")) %>% 
+  tax_fix()
+
+ntaxa(negf) # 742
+get_taxa_unique(negf, "Genus")
+
+sample_names(negf)
+
+# barplot
+sample_names(negf) <- c("DNA-Neg1","DNA-Neg2","DNA-Neg3a","DNA-Neg3b","DNA-Neg4",
+                        "PCR-Neg1","PCR-Neg2","PCR-Neg3a","PCR-Neg3b","PCR-Neg4" )
+
+
+p <- negf %>%
+  ps_mutate(Name = c("DNA-Neg1","DNA-Neg2","DNA-Neg3a","DNA-Neg3b","DNA-Neg4",
+                     "PCR-Neg1","PCR-Neg2","PCR-Neg3a","PCR-Neg3b","PCR-Neg4" )) %>% 
+  comp_barplot(
+    tax_level = "Phylum", #n_taxa = 5,
+    #tax_order = "name",
+    label = "Name",
+    sample_order = c("DNA-Neg1","DNA-Neg2","DNA-Neg3a","DNA-Neg3b","DNA-Neg4",
+                     "PCR-Neg1","PCR-Neg2","PCR-Neg3a","PCR-Neg3b","PCR-Neg4"),
+    merge_other = TRUE,
+    bar_width = 0.9,
+    # set merge_other = TRUE (the default) to remove outlines from inside "other" category
+  ) +
+  labs(y = "Relative Abundance") +
+  theme(
+    text = element_text(size = 16))
+
+str(p$data)
+# If 'top' doesn't exist, create it with NA or some default value
+if (!"top" %in% colnames(p$data)) {
+  p$data$top <- NA  # or some default value
+}
+
+
+# hacky fix to make taxa names alphabetical and remove "other"
+p$data <- filter(p$data, !unique == "other")
+p$data$Phylum %>% head()
+p$data$Phylum <- as.character(p$data$Phylum)
+p$data$Phylum[p$data$Phylum == "Other"] <- NA
+p <- p + guides(fill = guide_legend(title = "Phylum", reverse = FALSE))
+p 
+
+p$data$unique <- as.character(p$data$unique)
+p$data$unique[p$data$unique == "Other"] <- NA
+p
+
+# save
+ggsave(filename = "plots/neg-control-barplot.png", plot = p, dpi = 600)
+
+# save
+#saveRDS(negf, file = "ps-negcontrols-filtered.rds")
+
+## ----- positive control -----
+# "raw" positive controls
+pos <- ps %>%
+  ps_filter(str_detect(Sample_Type, "-Pos")) %>% 
+  tax_fix()
+
+# Extract the OTU table and convert it to a matrix
+otu_data <- as.matrix(otu_table(pos))
+
+# Remove empty rows (taxa with zero total counts)
+otu_data_clean <- otu_data[rowSums(otu_data) > 0, ]
+
+# Create a new phyloseq object with the cleaned OTU table
+pos_clean <- merge_phyloseq(phyloseq(otu_data_clean, tax_table(pos)), sample_data(pos))
+
+# Check for NA values in the sample sums
+na_samples <- which(is.na(sample_sums(pos_clean)))
+
+# If you find any, you can remove those samples as well
+pos_clean <- prune_samples(sample_sums(pos_clean) > 0, pos_clean)
+pos <- pos_clean
+
+pos %>% 
+  comp_barplot(
+    tax_level = "Phylum", n_taxa = 8
+  ) +
+  facet_wrap(~Sample_Type, scales = "free")
+
+## get positive controls after removing contaminants and filtering for relative abundance
+pspos <- psdecon %>% 
+  ps_filter(str_detect(Sample_Type, "-Pos")) 
+
+# there are 169 unique taxa
+ntaxa(pspos)
+
+pspos <- tax_fix(pspos)
+
+sample_data(pspos)
+
+# visualize in relative abundance barplot
+pspos %>%
+  comp_barplot(
+    tax_level = "Phylum", n_taxa = 3,  
+    merge_other = TRUE,
+    label = 'Sample_Type',
+    bar_width = 0.9
+    # set merge_other = TRUE (the default) to remove outlines from inside "other" category
+  )
+
+sample_names(pspos)
+
+# barplot
+sample_names(pspos) <- c("DNA-Pos1","DNA-Pos2","DNA-Pos3a","DNA-Pos3b","DNA-Pos4", "PCR-Pos1","PCR-Pos2",  "PCR-Pos3a","PCR-Pos3b","PCR-Pos4")
+
+p <- pspos %>%
+  ps_mutate(Name =  c("DNA-Pos1","DNA-Pos2","DNA-Pos3a","DNA-Pos3b","DNA-Pos4", "PCR-Pos1","PCR-Pos2",  "PCR-Pos3a","PCR-Pos3b","PCR-Pos4")) %>% 
+  comp_barplot(
+    tax_level = "Phylum", n_taxa = 3,
+    label = "Name",
+    sample_order =  c("DNA-Pos1","DNA-Pos2","DNA-Pos3a","DNA-Pos3b","DNA-Pos4", "PCR-Pos1","PCR-Pos2",  "PCR-Pos3a","PCR-Pos3b","PCR-Pos4"),
+    merge_other = TRUE,
+    bar_width = 0.9,
+    # set merge_other = TRUE (the default) to remove outlines from inside "other" category
+  ) 
+
+p
+
+# save
+ggsave(filename = "plots/pos-control-barplot.png", plot = last_plot(), dpi = 600)
+
+## ---- build positive Zymo control ----
+
+## control used in DNA extraction: ZymoBiomics Community Standard Lot ZRC190633, Cat D6300
+
+# strain info for 16S here: https://files.zymoresearch.com/pdf/d6300-_zymobiomics_microbial_community_standard_v1-1-3.pdf
+
+# build taxonomy - only need Phylum & Genus
+tax <- data.frame(
+  #row.names = c("Kingdom", "Genus"),
+  p.aeru = c("Bacteria", "Proteobacteria", "Gammaproteobacteria", "Pseudomonadales", "Pseudomonadaceae", "Pseudomonas"),
+  e.coli = c("Bacteria","Proteobacteria", "Gammaproteobacteria", "Enterobacterales", "Enterobacteriaceae", "Escherichia-Shigella"),
+  s.ent = c("Bacteria","Proteobacteria", "Gammaproteobacteria", "Enterobacterales", "Enterobacteriaceae", "Salmonella"),
+  l.ferm = c("Bacteria","Firmicutes", "Bacilli", "Lactobacillales", "Lactobacillaceae", "Lactobacillus"),
+  e.fae = c("Bacteria","Firmicutes", "Bacilli", "Lactobacillales", "Enterococcaceae", "Enterococcus"),
+  s.aur = c("Bacteria","Firmicutes", "Bacilli", "Staphylococcales", "Staphylococcaceae", "Staphylococcus"),## CHANGED THE ORDER
+  l.mon = c("Bacteria","Firmicutes", "Bacilli", "Lactobacillales", "Listeriaceae", "Listeria"), ## CHANGED THE ORDER
+  b.sub = c("Bacteria","Firmicutes", "Bacilli", "Bacillales", "Bacillaceae", "Bacillus")
+  
+)  %>% t()
+
+colnames(tax) <-c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus")
+
+
+zymo <- phyloseq(otu_table(
+  data.frame(
+    row.names = "ZymoComm",
+    p.aeru = 0.042,
+    e.coli = 0.101,
+    s.ent = 0.104,
+    l.ferm = 0.184,
+    e.fae = 0.099,
+    s.aur = 0.155,
+    l.mon = 0.141,
+    b.sub = 0.174
+  ), taxa_are_rows = FALSE
+),
+tax_table(
+  tax
+  
+),
+# have to do this for microViz...
+sample_data(data.frame(
+  row.names = "ZymoComm",
+  Treatment = "Zymo"
+))
+)
+
+# plot
+z<- comp_barplot(zymo, "Phylum",
+                 bar_width = 0.5)
+
+# plot with both
+ggarrange(p, z, legend = "right")
+
+ggsave(filename = "plots/pos-with-zymo.png", dpi = 600)
+
+## ---- find taxa in pos not in zymo ----
+get_taxa_unique(pspos, "Phylum")
+get_taxa_unique(pspos, "Genus")
+get_taxa_unique(zymo, "Phylum")
+get_taxa_unique(zymo, "Genus")
+
+pstruepos <- subset_taxa(pspos, Phylum == "Proteobacteria" | Phylum == "Firmicutes") 
+pstruepos <- subset_taxa(pspos, Genus == "Pseudomonas"| Genus == "Escherichia-Shigella" | Genus == "Lactobacillus" | Genus == "Enterococcus" | Genus == "Staphylococcus" | Genus == "Listeria" | Genus == "Bacillus")
+
+#create ps of those dropped from pos control
+psposrm <- subset_taxa(pspos, !taxa_names(pspos) %in% taxa_names(pstruepos)) #these are contams and need filtered out
+
+get_taxa_unique(pstruepos, "Phylum")
+get_taxa_unique(pstruepos, "Genus")
+
+get_taxa_unique(psposrm, "Phylum")
+get_taxa_unique(psposrm, "Genus")
+
+psposrm #114 taxa are pos control contaminants 
+
+## ---- get phyloseq of counts ----
+
+## we need the count data with the taxa present in the decontaminated and filtered PS
+pscount <- subset_taxa(ps, taxa_names(ps) %in% taxa_names(pssave)) %>% 
+  # remove controls
+  ps_filter(!str_detect(Sample_Type, "-Pos")) %>%
+  ps_filter(!str_detect(Sample_Type, "-Neg"))
+
+
+## ---- filter out positive control contaminants from both counts and rel abund phyloseqs ----
+pscount2 <- subset_taxa(pscount, !taxa_names(pscount) %in% taxa_names(psposrm)) # down to 965 taxa
+psrelabund  <- subset_taxa(pssave, !taxa_names(pssave) %in% taxa_names(psposrm)) # down to 965 taxa
+
+
+factor(sample_data(pscount2)$Sample_Type)
+factor(sample_data(psrelabund)$Sample_Type)
+tail(sample_data(pscount2))
+head(sample_data(pscount2))
+
+
+# Remove taxa with NAs
+pscount3 <- filter_taxa(pscount2, function(x) sum(is.na(x)) == 0, TRUE)
+
+## ---- Relative abundance barplot ----
+
+## all samples
+psrelabund %>% 
+  tax_fix() %>%
+  comp_barplot(
+    tax_level = "Phylum", n_taxa = 10,
+    merge_other = TRUE,
+  )+
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  facet_wrap(~Sample_Type, scales = "free")
+
+pscount2 %>% 
+  tax_fix() %>%
+  comp_barplot(
+    tax_level = "Phylum", n_taxa = 10,
+    merge_other = TRUE,
+  )+
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  facet_wrap(~Sample_Type, scales = "free", nrow = 2)
+
+
+# read in pc based decontamed ps to compare with this method 
+saveRDS(pscount3, file = "ps_object/ps_decontam/ps-posdecontam-filtered-counts.rds")
+saveRDS(psrelabund, file = "ps_object/ps_decontam/ps-decontam-filtered-relabun.rds")
+
+sample_data(pscount)
+sample_data(psrelabund)
+
+# ---- save work 
+save.image("ps_object/decontam.rdata")
